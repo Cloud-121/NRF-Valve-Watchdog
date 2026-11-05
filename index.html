@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchdog Flasher — turn an nRF52840 board into a SteamVR radio</title>
+<style>
+  :root { color-scheme: light; --bg:#f9fafb; --panel:#ffffff; --line:#e5e7eb; --fg:#111827; --dim:#4b5563; --acc:#2563eb; --acc-hover:#1e40af; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; --chip:#e5e7eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 "Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 2.25rem; font-weight:700; margin: 0 0 8px; letter-spacing:-.02em; }
+  .sub { color: var(--dim); margin: 0 0 28px; }
+  section { background:var(--panel); border:1px solid rgba(59,130,246,.2); border-radius:16px; padding:22px 24px; margin:18px 0; box-shadow:0 10px 15px -3px rgba(0,0,0,.08),0 4px 6px -4px rgba(0,0,0,.08); }
+  section.off { opacity:.5; pointer-events:none; }
+  h2 { font-size:1.1rem; font-weight:700; margin:0 0 10px; display:flex; gap:10px; align-items:center; }
+  h2 .n { background:var(--acc); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-grid; place-items:center; font-size:.85rem; font-weight:700; }
+  h2 .done { margin-left:auto; color:var(--ok); font-size:.9rem; }
+  p { margin:.4em 0; } .dim { color:var(--dim); } code { font:.88em "Geist Mono",ui-monospace,Menlo,Consolas,monospace; background:var(--chip); padding:1px 5px; border-radius:4px; word-break:break-all; }
+  button { font:inherit; background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 16px; cursor:pointer; font-weight:500; margin:6px 8px 6px 0; transition:background-color .2s; }
+  button:hover:not(:disabled) { background:var(--acc-hover); }
+  button.sec { background:#e5e7eb; color:#1f2937; }
+  button.sec:hover:not(:disabled) { background:#d1d5db; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  #drop { border:2px dashed #cbd5e1; background:#f9fafb; border-radius:10px; padding:22px; text-align:center; color:var(--dim); cursor:pointer; }
+  #drop:hover, #drop.over { border-color:var(--acc); color:var(--fg); }
+  ul.steps { margin:8px 0; padding-left:20px; } .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  input[type=text] { font:inherit; background:#fff; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; width:9em; }
+  pre#log { background:#f3f4f6; border:1px solid var(--line); border-radius:8px; padding:10px 12px; max-height:240px; overflow:auto; font:.85rem ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; }
+  .banner { background:#fffbeb; border:1px solid #f59e0b; border-radius:10px; padding:12px 14px; margin:14px 0; font-size:.93rem; }
+  footer { color:var(--dim); font-size:.9rem; margin-top:32px; text-align:center; }
+  a { color:var(--acc); text-decoration:none; } a:hover { color:var(--acc-hover); text-decoration:underline; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Watchdog Flasher</h1>
+  <p class="sub">Turns your MeshCore/Tastic, or any nRF52840 board into a SteamVR watchdog dongle.</p>
+
+
+  <section id="s1">
+    <h2><span class="n">1</span> Valve radio firmware <span class="done" id="d1"></span></h2>
+    <p class="dim">Pick the file <code>gd_*_dfu.zip</code> from your SteamVR folder:<br>
+      <code>…/Steam/steamapps/common/SteamVR/drivers/indexhmd/resources/firmware/radio/</code></p>
+    <input id="zip" type="file" accept=".zip,application/zip" style="display:none">
+    <div id="drop" role="button" tabindex="0">Drop <code>gd_1558748372_dfu.zip</code> here, or click to choose</div>
+    <p><button class="sec" id="findsteam">Find it in my SteamVR folder…</button> <span class="dim" id="findhint">Go to your SteamVR folder.</span></p>
+    <div id="fwinfo"></div>
+  </section>
+
+  <section id="s2" class="off">
+    <h2><span class="n">2</span> Board in UF2 mode <span class="done" id="d2"></span></h2>
+    <p>Double-tap the board's reset button until a drive (e.g. <code>RAK4631</code>, <code>T1000-E</code>) appears. If the board is running normal firmware you can try: <button class="sec" id="touch">Reboot into bootloader (WebSerial)</button></p>
+    <p><button id="pick">Select the UF2 drive…</button> <span class="dim">Chrome / Edge only (File System Access). Choose the drive folder and allow editing.</span></p>
+    <p class="warn" style="font-size:.9rem">⚠ If your board doesn't support UF2 mode (no drive appears), you'll have to flash a UF2 bootloader first.</p>
+    <div id="boardinfo"></div>
+  </section>
+
+  <section id="s3" class="off">
+    <h2><span class="n">3</span> Flash <span class="done" id="d3"></span></h2>
+    <div id="plan"></div>
+    <p class="warn"><b>⚠ This will flash firmware to your board</b>, replacing what is on it now.</p>
+    <button id="go" disabled>Confirm &amp; flash</button>
+    <pre id="log" hidden></pre>
+  </section>
+
+  <section id="s4" class="off">
+    <h2><span class="n">4</span> Verify <span class="done" id="d4"></span></h2>
+    <p>The board should reboot as <code>28de:2102</code> “Valve VR Radio”. If it doesn't appear after ~20 s, unplug and re-plug it (don't double-tap).</p>
+    <button id="verify">Check USB for a Valve radio…</button> <span id="vres"></span>
+  </section>
+
+  <footer>Made by ScarlettOSA</footer>
+</main>
+
+<script src="core.js"></script>
+<script>
+const { loadValve, makeUF2, parseInfo, planFor, SD_ADDR, APP_ADDR, VALVE_VID, VALVE_PIDS } = WatchdogCore;
+
+const $ = id => document.getElementById(id);
+const st = { zipBuf: null, valve: null, dir: null, info: null, plan: null };
+const enable = (id, on) => $(id).classList.toggle("off", !on);
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const log = m => { const l = $("log"); l.hidden = false; l.textContent += m + "\n"; l.scrollTop = l.scrollHeight; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---- 1: firmware ----
+async function rebuild() {
+  if (!st.zipBuf) return;
+  try {
+    st.valve = await loadValve(st.zipBuf, true);
+    $("fwinfo").innerHTML = `<p class="ok">✓ ${esc(st.valve.sdName)} (${st.valve.sd.length.toLocaleString()} B) + ${esc(st.valve.appName)} (${st.valve.app.length.toLocaleString()} B)</p>` +
+      st.valve.notes.map(n => `<p class="${n.includes("SKIPPED") ? "warn" : "dim"}">• ${esc(n)}</p>`).join("");
+    $("d1").textContent = "ready"; enable("s2", true);
+    if (st.info) showPlan();
+  } catch (e) {
+    st.valve = null; $("fwinfo").innerHTML = `<p class="bad">✗ ${esc(e.message)}</p>`; $("d1").textContent = ""; $("go").disabled = true; enable("s2", false);
+  }
+}
+const takeZip = async f => { if (f) { st.zipBuf = new Uint8Array(await f.arrayBuffer()); rebuild(); } };
+$("drop").onclick = () => $("zip").click();
+$("drop").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("zip").click(); } };
+$("zip").onclick = e => e.stopPropagation();
+$("zip").onchange = e => { takeZip(e.target.files[0]); e.target.value = ""; };
+$("drop").ondragover = e => { e.preventDefault(); $("drop").classList.add("over"); };
+$("drop").ondragleave = () => $("drop").classList.remove("over");
+$("drop").ondrop = e => { e.preventDefault(); $("drop").classList.remove("over"); takeZip(e.dataTransfer.files[0]); };
+
+// ---- 1b: locate the zip inside a SteamVR/Steam folder ----
+if (!hasFSA0()) { $("findsteam").disabled = true; $("findhint").textContent = "Needs Chrome or Edge (File System Access). Use the drop zone instead."; }
+function hasFSA0() { return "showDirectoryPicker" in window; }
+async function descend(dir, parts) { for (const p of parts) dir = await dir.getDirectoryHandle(p); return dir; }
+async function findRadioDir(root) {
+  const tail = ["drivers", "indexhmd", "resources", "firmware", "radio"];
+  const bases = [[], ["SteamVR"], ["common", "SteamVR"], ["steamapps", "common", "SteamVR"]];
+  if (root.name === "radio") return root;
+  for (const b of bases) { try { return await descend(root, [...b, ...tail]); } catch { /* try next */ } }
+  return null;
+}
+$("findsteam").onclick = async () => {
+  let root;
+  try { root = await showDirectoryPicker({ mode: "read" }); } catch (e) { return; }   // cancelled
+  const dir = await findRadioDir(root);
+  if (!dir) { $("fwinfo").innerHTML = `<p class="bad">✗ Couldn't find <code>drivers/indexhmd/resources/firmware/radio</code> under “${esc(root.name)}”. Pick the SteamVR folder (…/steamapps/common/SteamVR), or install SteamVR and the Index driver.</p>`; return; }
+  const zips = [];
+  for await (const [name, h] of dir.entries()) { const m = /^gd_(\d+)_dfu\.zip$/.exec(name); if (m && h.kind === "file") zips.push({ n: Number(m[1]), h }); }
+  if (!zips.length) { $("fwinfo").innerHTML = '<p class="bad">✗ That radio folder has no <code>gd_*_dfu.zip</code>.</p>'; return; }
+  zips.sort((a, b) => (b.n === 1558748372) - (a.n === 1558748372) || b.n - a.n);     // prefer the verified build, else newest
+  await takeZip(await zips[0].h.getFile());
+};
+
+// ---- 2: board ----
+const hasFSA = "showDirectoryPicker" in window;
+if (!hasFSA) { $("pick").disabled = true; $("pick").insertAdjacentHTML("afterend", ' <span class="warn">Needs Chrome or Edge.</span>'); }
+if (!("serial" in navigator)) $("touch").disabled = true;
+
+$("touch").onclick = async () => {
+  try { const port = await navigator.serial.requestPort(); await port.open({ baudRate: 1200 }); await sleep(400); await port.close();
+        $("boardinfo").innerHTML = '<p class="dim">Touch sent. A UF2 drive should appear in a few seconds (otherwise double-tap reset).</p>'; }
+  catch (e) { $("boardinfo").innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
+};
+
+async function readInfo(dir) {
+  const fh = await dir.getFileHandle("INFO_UF2.TXT");
+  return parseInfo(await (await fh.getFile()).text());
+}
+$("pick").onclick = async () => {
+  try {
+    const dir = await showDirectoryPicker({ mode: "readwrite" });
+    st.info = await readInfo(dir); st.dir = dir;
+  } catch (e) {
+    $("boardinfo").innerHTML = `<p class="bad">${e.name === "NotFoundError" ? "That folder has no INFO_UF2.TXT — it isn't a UF2 bootloader drive." : esc(e.message)}</p>`; return;
+  }
+  $("boardinfo").innerHTML = `<p class="ok">✓ ${esc(st.info.Model || "UF2 board")} <span class="dim">[${esc(st.info["Board-ID"] || "?")}]</span></p>
+    <p class="dim">${esc(st.info.Bootloader || "")} · SoftDevice: ${esc(st.info.SoftDevice || "unknown")}</p>`;
+  $("d2").textContent = "detected"; showPlan();
+};
+
+// ---- 3: plan + flash ----
+function showPlan() {
+  st.plan = planFor(st.info);
+  enable("s3", true);
+  const p = st.plan;
+  if (!p.ok) { $("plan").innerHTML = `<p class="bad">✗ ${esc(p.blocked)}</p>`; $("go").disabled = true; return; }
+  $("plan").innerHTML = `<p>Plan for <b>${esc(st.info["Board-ID"] || "this board")}</b>:</p><ul class="steps">` +
+    p.steps.map(s => `<li>${esc(s.label)}${s.note ? ` <span class="dim">— ${esc(s.note)}</span>` : ""}</li>`).join("") + `</ul>` +
+    p.warnings.map(w => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
+  $("go").disabled = !(st.valve && p.ok);
+}
+
+async function writeFile(dir, name, bytes) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  try { await w.write(bytes); await w.close(); }
+  catch (e) { log(`  (write reported "${e.message}" — normal if the board rebooted as soon as the last block landed)`); }
+}
+
+async function repickDrive() {
+  log("Waiting for the UF2 drive to come back. If it doesn't, double-tap reset, then re-select it.");
+  $("boardinfo").innerHTML = '<p class="warn">Drive dropped (expected after the SoftDevice write). Select it again →</p>';
+  for (;;) {
+    try { const dir = await showDirectoryPicker({ mode: "readwrite" }); st.info = await readInfo(dir); return dir; }
+    catch (e) { if (e.name === "AbortError") throw new Error("Cancelled while waiting for the drive"); log("  " + e.message + " — try again"); }
+  }
+}
+
+$("go").onclick = async () => {
+  $("go").disabled = true; $("log").textContent = "";
+  try {
+    for (const step of st.plan.steps) {
+      if (step.kind === "sd") {
+        log(`Writing SoftDevice ${(st.valve.sd.length / 1024).toFixed(0)} KB…`);
+        await writeFile(st.dir, "valve_s140.uf2", makeUF2(st.valve.sd, SD_ADDR));
+        await sleep(3000);
+        st.dir = await repickDrive(); log("Drive is back.");
+      } else {
+        log(`Writing application ${(st.valve.app.length / 1024).toFixed(0)} KB…`);
+        await writeFile(st.dir, "valve_app.uf2", makeUF2(st.valve.app, APP_ADDR));
+      }
+    }
+    log("Done writing. The board is rebooting.\nIf nothing shows up in ~20 s, unplug and re-plug it (don't double-tap).");
+    $("d3").textContent = "written"; enable("s4", true);
+  } catch (e) { log("✗ " + e.message); $("go").disabled = false; }
+};
+
+// ---- 4: verify ----
+$("verify").onclick = async () => {
+  if (!navigator.usb) { $("vres").innerHTML = '<span class="warn">WebUSB unavailable — check <code>lsusb</code> / Device Manager for 28de:2102.</span>'; return; }
+  try {
+    const d = await navigator.usb.requestDevice({ filters: [{ vendorId: VALVE_VID }] });
+    const name = VALVE_PIDS[d.productId] || "Valve device";
+    $("vres").innerHTML = `<span class="ok">✓ ${esc(d.productName || name)} (${d.vendorId.toString(16)}:${d.productId.toString(16)})</span>`; $("d4").textContent = "radio is up";
+  } catch (e) { $("vres").innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
+};
+</script>
+</body>
+</html>
